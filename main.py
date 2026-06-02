@@ -26,28 +26,55 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 # CONFIG — Render'da /tmp'de tut, yoksa orijinalden kopyala
 # ─────────────────────────────────────────────────────────────
+import sqlite3
+
+DB_PATH    = "/tmp/etf_data.db"
 TMP_CONFIG = "/tmp/etf_config.json"
 
+def _get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_config (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    return conn
+
 def get_config() -> dict:
-    """Config'i /tmp'den oku. Yoksa config.json'dan kopyala."""
-    if os.path.exists(TMP_CONFIG):
-        try:
-            with open(TMP_CONFIG) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    # İlk çalıştırmada orijinal config'i kopyala
+    """Config'i DB'den oku. Yoksa config.json'dan yükle."""
+    try:
+        conn = _get_db()
+        row  = conn.execute(
+            "SELECT value FROM app_config WHERE key='etf_config'"
+        ).fetchone()
+        conn.close()
+        if row:
+            return json.loads(row[0])
+    except Exception as e:
+        log.error(f"DB config okuma hatasi: {e}")
     cfg = load_config("config.json")
     _save_config(cfg)
     return cfg
 
 def _save_config(cfg: dict):
-    """Config'i /tmp'ye kaydet."""
+    """Config'i DB'ye kaydet (restart'ta kaybolmaz)."""
+    try:
+        conn = _get_db()
+        conn.execute(
+            "INSERT OR REPLACE INTO app_config (key, value) VALUES ('etf_config', ?)",
+            (json.dumps(cfg, ensure_ascii=False),)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"DB config yazma hatasi: {e}")
     try:
         with open(TMP_CONFIG, "w") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log.error(f"Config kaydetme hatası: {e}")
+    except Exception:
+        pass
 
 app = FastAPI(
     title="ETF Trader API",
