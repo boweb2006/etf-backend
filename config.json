@@ -1,7 +1,9 @@
 {
   "etf_list": [
-    "VWRA.L", "EQQQ.L", "IWDA.L", "CSPX.L",
-    "ISF.L", "VUAA.L", "IUIT.L", "IEMA.L"
+    "VWRA.L", "CSPX.L", "VHYD.L", "IB01.L",
+    "EQQQ.L", "IWDA.L", "ISF.L", "VUAA.L",
+    "IUIT.L", "IEMA.L", "SCHD", "IAU",
+    "ABBV", "MSFT"
   ],
   "refresh_interval_seconds": 300,
   "signal_config": {
