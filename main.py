@@ -233,6 +233,37 @@ def get_etf_detail(symbol: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/dividends/{symbol}")
+def get_dividends(symbol: str):
+    """Son 2 yılın temettü verisi ve tahmini yıllık getiri"""
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(symbol)
+        divs   = ticker.dividends
+        if divs.empty:
+            return {"symbol": symbol, "dividends": [], "annual_estimate": 0}
+        # Son 1 yılın temettüleri
+        one_year_ago = datetime.now() - timedelta(days=365)
+        recent = divs[divs.index > str(one_year_ago)[:10]]
+        annual = float(recent.sum()) if not recent.empty else 0
+        # Güncel fiyat
+        info  = ticker.fast_info
+        price = float(info.last_price) if hasattr(info, "last_price") else None
+        yield_pct = (annual / price * 100) if price and price > 0 else 0
+        history = [
+            {"date": str(d)[:10], "amount": float(v)}
+            for d, v in divs.tail(20).items()
+        ]
+        return {
+            "symbol":           symbol,
+            "dividends":        history,
+            "annual_estimate":  round(annual, 4),
+            "yield_pct":        round(yield_pct, 2),
+            "currency":         "GBP" if symbol.endswith(".L") else "USD",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
 @app.get("/api/chart/{symbol}")
 def get_chart_data(symbol: str, period: str = "1y"):
     try:
