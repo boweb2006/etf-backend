@@ -363,3 +363,23 @@ def update_config(update: ConfigUpdate):
 def force_refresh():
     _cache.clear()
     return {"status": "ok", "message": "Cache temizlendi"}
+
+@app.get("/api/debug/{symbol}")
+def debug_live_price(symbol: str):
+    """fetch_live_price sonucunu doğrudan döner — teşhis için"""
+    import math
+    try:
+        result = fetch_live_price(symbol.upper())
+        if result is None:
+            return {"symbol": symbol, "live": None, "error": "fetch_live_price None döndü"}
+        # NaN kontrolü
+        cleaned = {}
+        for k, v in result.items():
+            try:
+                cleaned[k] = None if (isinstance(v, float) and (math.isnan(v) or math.isinf(v))) else v
+            except Exception:
+                cleaned[k] = str(v)
+        return {"symbol": symbol, "live": cleaned}
+    except Exception as e:
+        import traceback
+        return {"symbol": symbol, "error": str(e), "trace": traceback.format_exc()}
