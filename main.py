@@ -290,15 +290,25 @@ def get_chart_data(symbol: str, period: str = "1y"):
         df  = fetch_history(symbol, days=period_bars)
         if df is None or df.empty:
             raise HTTPException(status_code=404, detail=f"{symbol} data not found")
+        df = df.dropna(subset=["open", "high", "low", "close"])
+        if df.empty:
+            raise HTTPException(status_code=404, detail=f"{symbol} data empty after NaN drop")
+        import math
+        def _f(v, dec=4):
+            try:
+                f = float(v)
+                return round(f, dec) if not math.isnan(f) and not math.isinf(f) else None
+            except Exception:
+                return None
         ohlcv = []
         for dt, row in df.iterrows():
             ohlcv.append({
                 "date":   dt.strftime("%Y-%m-%d"),
-                "open":   round(float(row["open"]),  4),
-                "high":   round(float(row["high"]),  4),
-                "low":    round(float(row["low"]),   4),
-                "close":  round(float(row["close"]), 4),
-                "volume": int(row["volume"]),
+                "open":   _f(row["open"]),
+                "high":   _f(row["high"]),
+                "low":    _f(row["low"]),
+                "close":  _f(row["close"]),
+                "volume": int(row["volume"]) if not math.isnan(float(row["volume"] or 0)) else 0,
             })
         ind = compute_all(symbol, df, cfg["signal_config"])
         s   = ind.get("_series", {})
