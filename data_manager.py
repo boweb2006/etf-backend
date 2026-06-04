@@ -154,6 +154,12 @@ def fetch_live_price(symbol: str, retries: int = 3) -> dict | None:
                     df.columns = df.columns.get_level_values(0)
                 df.columns = [c.lower() for c in df.columns]
 
+                # NaN satırlarını temizle
+                df = df.dropna(subset=["close"])
+                if df.empty:
+                    log.warning(f"{symbol}: download sonrası tüm close NaN")
+                    continue
+
                 price = float(df["close"].iloc[-1])
                 prev  = float(df["close"].iloc[-2]) if len(df) >= 2 else price
                 chg     = price - prev

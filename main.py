@@ -116,18 +116,32 @@ def get_full_analysis(cfg: dict):
     _set_cache("full_analysis", result)
     return result
 
+def _clean(v):
+    """NaN/Inf değerleri None'a çevirir — JSON serialize hatası önler."""
+    if v is None:
+        return None
+    try:
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    except (TypeError, ValueError):
+        return v
+
+import math
+
 def format_indicator(ind: dict, sig: dict, live: dict | None = None) -> dict:
     if "error" in ind:
         return {"symbol": ind["symbol"], "error": ind["error"]}
 
     # ── Fiyat: önce fetch_live_price, yoksa indicators'dan ──
-    price    = ind.get("price")
-    chg_1d   = ind.get("chg_1d")
+    price    = _clean(ind.get("price"))
+    chg_1d   = _clean(ind.get("chg_1d"))
     if live:
-        price  = live.get("price", price)
-        # chg_1d'yi live change'den hesapla (daha güncel)
+        live_price = _clean(live.get("price"))
+        if live_price is not None:
+            price = live_price
         if live.get("chg_pct") is not None:
-            chg_1d = live["chg_pct"]
+            chg_1d = _clean(live["chg_pct"])
 
     return {
         "symbol": ind["symbol"],
