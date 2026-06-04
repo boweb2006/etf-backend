@@ -11,7 +11,6 @@ import json
 import time
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -47,18 +46,14 @@ def get_connection(db_path: str) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS ohlcv (
             symbol  TEXT NOT NULL,
             date    TEXT NOT NULL,
-            open    REAL,
-            high    REAL,
-            low     REAL,
-            close   REAL,
-            volume  INTEGER,
+            open    REAL, high REAL, low REAL, close REAL, volume INTEGER,
             PRIMARY KEY (symbol, date)
         )
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS fetch_log (
-            symbol      TEXT PRIMARY KEY,
-            last_fetch  TEXT NOT NULL
+            symbol TEXT PRIMARY KEY,
+            last_fetch TEXT NOT NULL
         )
     """)
     conn.commit()
@@ -79,10 +74,10 @@ def save_ohlcv(conn: sqlite3.Connection, symbol: str, df: pd.DataFrame):
             _safe(row.get("close") or row.get("Close")),
             int(row.get("volume") or row.get("Volume") or 0),
         ))
-    cur.execute("""
-        INSERT OR REPLACE INTO fetch_log (symbol, last_fetch)
-        VALUES (?, ?)
-    """, (symbol, datetime.now().isoformat()))
+    cur.execute(
+        "INSERT OR REPLACE INTO fetch_log (symbol, last_fetch) VALUES (?, ?)",
+        (symbol, datetime.now().isoformat())
+    )
     conn.commit()
 
 def load_ohlcv(conn: sqlite3.Connection, symbol: str, days: int = 1260) -> pd.DataFrame | None:
@@ -108,7 +103,6 @@ def _safe(v) -> float | None:
 def fetch_history(symbol: str, days: int = 1260, retries: int = 3) -> pd.DataFrame | None:
     end   = datetime.now()
     start = end - timedelta(days=int(days * 1.6))
-
     for attempt in range(1, retries + 1):
         try:
             ticker = yf.Ticker(symbol)
@@ -136,47 +130,48 @@ def fetch_history(symbol: str, days: int = 1260, retries: int = 3) -> pd.DataFra
 def fetch_live_price(symbol: str, retries: int = 3) -> dict | None:
     """
     Anlık fiyat bilgisini çeker.
-    Piyasa açıkken: history(period='1d', interval='1m') → son dakika kapanışı
-    Piyasa kapalıyken: history(period='5d', interval='1d') → son günlük kapanış
-    fast_info.last_price KULLANILMIYOR — bazen stale değer döndürüyor.
+    yf.download() kullanır — hem US hem LSE sembolleri için güvenilir.
+    auto_adjust=False → ham kapanış fiyatı, temettü/split etkisi yok.
     """
     for attempt in range(1, retries + 1):
         try:
             t = yf.Ticker(symbol)
 
-            # ── Piyasa açık: 1 dakikalık son bar ──────────────
-            hist_1m = t.history(period="1d", interval="1m")
-            if hist_1m is not None and not hist_1m.empty:
-                price = float(hist_1m["Close"].iloc[-1])
-                # Önceki kapanış için günlük geçmiş
-                hist_1d = t.history(period="5d", interval="1d")
-                prev = float(hist_1d["Close"].iloc[-2]) if hist_1d is not None and len(hist_1d) >= 2 else price
-                chg     = price - prev
-                chg_pct = chg / prev * 100 if prev else 0
-                fi = t.fast_info
-                return {
-                    "symbol":   symbol,
-                    "price":    round(price, 4),
-                    "change":   round(chg, 4),
-                    "chg_pct":  round(chg_pct, 2),
-                    "currency": getattr(fi, "currency", "USD"),
-                    "ts":       datetime.now().strftime("%H:%M:%S"),
-                }
+            # ── Yöntem 1: 5 günlük download, auto_adjust=False ──
+            # En güvenilir yöntem — LSE dahil tüm borsa sembolleri için çalışır
+            df = yf.download(
+                symbol,
+                period="5d",
+                interval="1d",
+                auto_adjust=False,
+                progress=False,
+                timeout=12,
+            )
 
-            # ── Piyasa kapalı: günlük son kapanış ─────────────
-            hist_1d = t.history(period="5d", interval="1d")
-            if hist_1d is not None and not hist_1d.empty:
-                price = float(hist_1d["Close"].iloc[-1])
-                prev  = float(hist_1d["Close"].iloc[-2]) if len(hist_1d) >= 2 else price
+            if df is not None and not df.empty:
+                # MultiIndex olabilir, düzelt
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                df.columns = [c.lower() for c in df.columns]
+
+                price = float(df["close"].iloc[-1])
+                prev  = float(df["close"].iloc[-2]) if len(df) >= 2 else price
                 chg     = price - prev
                 chg_pct = chg / prev * 100 if prev else 0
+
                 fi = t.fast_info
+                currency = "USD"
+                try:
+                    currency = getattr(fi, "currency", "USD") or "USD"
+                except Exception:
+                    pass
+
                 return {
                     "symbol":   symbol,
                     "price":    round(price, 4),
                     "change":   round(chg, 4),
                     "chg_pct":  round(chg_pct, 2),
-                    "currency": getattr(fi, "currency", "USD"),
+                    "currency": currency,
                     "ts":       datetime.now().strftime("%H:%M:%S"),
                 }
 
