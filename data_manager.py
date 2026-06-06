@@ -127,6 +127,51 @@ def fetch_history(symbol: str, days: int = 1260, retries: int = 3) -> pd.DataFra
     return None
 
 
+# ─────────────────────────────────────────────────────────────
+# TWELVE DATA — CANLI FİYAT
+# ─────────────────────────────────────────────────────────────
+def _td_symbol(symbol: str):
+    if symbol.endswith(".L"):
+        return symbol[:-2], "LSE"
+    return symbol, None
+
+def fetch_live_price_twelvedata(symbol: str, api_key: str, retries: int = 3) -> dict | None:
+    import requests, math
+    for attempt in range(1, retries + 1):
+        try:
+            sym, exchange = _td_symbol(symbol)
+            params = {"symbol": sym, "apikey": api_key}
+            if exchange:
+                params["exchange"] = exchange
+            r = requests.get("https://api.twelvedata.com/quote",
+                             params=params, timeout=12)
+            r.raise_for_status()
+            data = r.json()
+            if data.get("status") == "error":
+                raise ValueError(data.get("message", "TD hata"))
+            price    = float(data.get("close") or data.get("price") or 0)
+            prev     = float(data.get("previous_close") or price)
+            currency = data.get("currency", "USD")
+            if price == 0 or math.isnan(price):
+                raise ValueError("Fiyat sifir veya NaN")
+            chg     = price - prev
+            chg_pct = chg / prev * 100 if prev else 0
+            return {
+                "symbol":   symbol,
+                "price":    round(price, 4),
+                "change":   round(chg, 4),
+                "chg_pct":  round(chg_pct, 2),
+                "currency": currency,
+                "ts":       datetime.now().strftime("%H:%M:%S"),
+                "source":   "twelvedata",
+            }
+        except Exception as e:
+            log.error(f"TD {symbol} hata (deneme {attempt}): {e}")
+            if attempt < retries:
+                time.sleep(2 ** attempt)
+    return None
+
+
 def fetch_live_price(symbol: str, retries: int = 3) -> dict | None:
     """
     Anlık fiyat bilgisini çeker.

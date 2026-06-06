@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from data_manager import load_config, save_config, refresh_all, fetch_history, fetch_live_price
+from data_manager import load_config, save_config, refresh_all, fetch_history, fetch_live_price, fetch_live_price_twelvedata
 from indicators import compute_all
 from signal_engine import compute_all_signals
 
@@ -26,6 +26,7 @@ import sqlite3
 
 DB_PATH    = "/tmp/etf_data.db"
 TMP_CONFIG = "/tmp/etf_config.json"
+TD_API_KEY = "acb4f55f69944a41844eb4e5a345ab9f"
 
 def _get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -82,6 +83,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─────────────────────────────────────────────────────────────
+# VERİ KAYNAĞI SEÇİCİ
+# ─────────────────────────────────────────────────────────────
+def get_live_price(symbol: str) -> dict | None:
+    """Config'e göre doğru veri kaynağından fiyat çek."""
+    try:
+        cfg = get_config()
+        source = cfg.get("data_source", "yfinance")
+    except Exception:
+        source = "yfinance"
+
+    if source == "twelvedata":
+        result = fetch_live_price_twelvedata(symbol, TD_API_KEY)
+        if result:
+            return result
+        log.warning(f"{symbol}: Twelve Data başarısız, yfinance'e geç")
+
+    return fetch_live_price(symbol)
 
 # ─────────────────────────────────────────────────────────────
 # CACHE
@@ -226,7 +246,7 @@ def get_all_etfs():
             sig  = signals.get(sym, {"signal_name": "TUT", "score": 50,
                                      "icon": "🟡", "color": "#ffd740"})
             # Her sembol için canlı fiyat çek
-            live = fetch_live_price(sym)
+            live = get_live_price(sym)
             result.append(format_indicator(ind, sig, live))
         result.sort(key=lambda x: x.get("signal", {}).get("score", 50), reverse=True)
         return {"data": result, "count": len(result),
@@ -245,7 +265,7 @@ def get_etf_detail(symbol: str):
         sig = signals.get(symbol)
         if ind is None:
             raise HTTPException(status_code=404, detail=f"{symbol} bulunamadı")
-        live = fetch_live_price(symbol)
+        live = get_live_price(symbol)
         return format_indicator(ind, sig or {}, live)
     except HTTPException:
         raise
