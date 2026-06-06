@@ -130,61 +130,102 @@ def fetch_history(symbol: str, days: int = 1260, retries: int = 3) -> pd.DataFra
 def fetch_live_price(symbol: str, retries: int = 3) -> dict | None:
     """
     Anlık fiyat bilgisini çeker.
-    yf.download() kullanır — hem US hem LSE sembolleri için güvenilir.
-    auto_adjust=False → ham kapanış fiyatı, temettü/split etkisi yok.
+    Yahoo Finance v8 JSON API kullanır — intraday dahil güncel veri döner.
     """
+    import requests, math
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
+
     for attempt in range(1, retries + 1):
         try:
+            # Yöntem 1: Yahoo Finance v8 — 1m interval, regularMarketPrice
+            url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                   f"?interval=1m&range=1d&includePrePost=false")
+            r   = requests.get(url, headers=headers, timeout=12)
+            r.raise_for_status()
+            data = r.json()
+
+            result = data.get("chart", {}).get("result", [])
+            if not result:
+                raise ValueError("Bos sonuc")
+
+            meta     = result[0].get("meta", {})
+            price    = meta.get("regularMarketPrice") or meta.get("previousClose")
+            prev     = meta.get("previousClose") or price
+            currency = meta.get("currency", "USD")
+
+            if price is None or (isinstance(price, float) and math.isnan(price)):
+                raise ValueError("Fiyat None veya NaN")
+
+            chg     = (price - prev) if prev else 0
+            chg_pct = chg / prev * 100 if prev else 0
+
+            return {
+                "symbol":   symbol,
+                "price":    round(float(price), 4),
+                "change":   round(float(chg), 4),
+                "chg_pct":  round(float(chg_pct), 2),
+                "currency": currency,
+                "ts":       datetime.now().strftime("%H:%M:%S"),
+            }
+
+        except Exception as e:
+            log.error(f"{symbol} canli fiyat hatasi v8 (deneme {attempt}): {e}")
+
+        # Yöntem 2: yfinance 1h interval — gunun en son saatlik kapanis
+        try:
             t = yf.Ticker(symbol)
-
-            # ── Yöntem 1: 5 günlük download, auto_adjust=False ──
-            # En güvenilir yöntem — LSE dahil tüm borsa sembolleri için çalışır
-            df = yf.download(
-                symbol,
-                period="5d",
-                interval="1d",
-                auto_adjust=False,
-                progress=False,
-                timeout=12,
-            )
-
-            if df is not None and not df.empty:
-                # MultiIndex olabilir, düzelt
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = df.columns.get_level_values(0)
-                df.columns = [c.lower() for c in df.columns]
-
-                # NaN satırlarını temizle
-                df = df.dropna(subset=["close"])
-                if df.empty:
-                    log.warning(f"{symbol}: download sonrası tüm close NaN")
-                    continue
-
-                price = float(df["close"].iloc[-1])
-                prev  = float(df["close"].iloc[-2]) if len(df) >= 2 else price
-                chg     = price - prev
-                chg_pct = chg / prev * 100 if prev else 0
-
-                fi = t.fast_info
+            h = t.history(period="2d", interval="1h").dropna()
+            if not h.empty:
+                price = float(h["Close"].iloc[-1])
+                # Onceki gun kapanisi icin 1d veri
+                h1d = t.history(period="5d", interval="1d").dropna()
+                prev = float(h1d["Close"].iloc[-2]) if len(h1d) >= 2 else price
+                chg  = price - prev
+                fi   = t.fast_info
                 currency = "USD"
                 try:
                     currency = getattr(fi, "currency", "USD") or "USD"
                 except Exception:
                     pass
-
                 return {
                     "symbol":   symbol,
                     "price":    round(price, 4),
                     "change":   round(chg, 4),
-                    "chg_pct":  round(chg_pct, 2),
+                    "chg_pct":  round(chg / prev * 100 if prev else 0, 2),
                     "currency": currency,
                     "ts":       datetime.now().strftime("%H:%M:%S"),
                 }
-
         except Exception as e:
-            log.error(f"{symbol} canlı fiyat hatası (deneme {attempt}): {e}")
-            if attempt < retries:
-                time.sleep(2 ** attempt)
+            log.error(f"{symbol} canli fiyat hatasi 1h (deneme {attempt}): {e}")
+
+        if attempt < retries:
+            time.sleep(2 ** attempt)
+
+    # Fallback: yfinance 1d son kapalis
+    try:
+        t = yf.Ticker(symbol)
+        h = t.history(period="5d", interval="1d").dropna()
+        if not h.empty:
+            price = float(h["Close"].iloc[-1])
+            prev  = float(h["Close"].iloc[-2]) if len(h) >= 2 else price
+            chg   = price - prev
+            return {
+                "symbol":   symbol,
+                "price":    round(price, 4),
+                "change":   round(chg, 4),
+                "chg_pct":  round(chg / prev * 100 if prev else 0, 2),
+                "currency": "USD",
+                "ts":       datetime.now().strftime("%H:%M:%S"),
+            }
+    except Exception as e:
+        log.error(f"{symbol} fallback hatasi: {e}")
+
     return None
 
 
