@@ -371,8 +371,27 @@ def update_config(update: ConfigUpdate):
 
 @app.post("/api/refresh")
 def force_refresh():
+    import threading
     _cache.clear()
-    return {"status": "ok", "message": "Cache temizlendi"}
+    # SQLite ohlcv ve fetch_log temizle — taze veri zorla
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("DELETE FROM ohlcv")
+        conn.execute("DELETE FROM fetch_log")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"SQLite temizleme hatasi: {e}")
+    # Arka planda yeniden cek
+    def _bg_refresh():
+        try:
+            cfg = get_config()
+            refresh_all(cfg)
+            log.info("Arka plan refresh tamamlandi")
+        except Exception as e:
+            log.error(f"Arka plan refresh hatasi: {e}")
+    threading.Thread(target=_bg_refresh, daemon=True).start()
+    return {"status": "ok", "message": "Cache ve DB temizlendi, veri yeniden cekiliyor"}
 
 @app.get("/api/debug/{symbol}")
 def debug_live_price(symbol: str):
